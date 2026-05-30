@@ -28,7 +28,7 @@ test_model_connection = coach_module.test_model_connection
 
 
 BASE_DIR = Path(__file__).parent
-PROMPT_PATH = BASE_DIR / "prompts" / "reading_coach.md"
+PROMPT_PATH = BASE_DIR / "reading_coach.md"
 CHAT_MODES = [
     "像朋友一样聊",
     "帮我讲明白",
