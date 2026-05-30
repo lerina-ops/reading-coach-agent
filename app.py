@@ -4,9 +4,9 @@ from pathlib import Path
 
 import streamlit as st
 
-import reading_coach.coach as coach_module
-from reading_coach.library import extract_text_from_upload, retrieve_relevant_snippets
-from reading_coach.storage import (
+import coach as coach_module
+from library import extract_text_from_upload, retrieve_relevant_snippets
+from storage import (
     add_book,
     add_chat_message,
     add_reading_record,
