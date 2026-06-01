@@ -4,21 +4,40 @@ from pathlib import Path
 
 import streamlit as st
 
-import coach as coach_module
-from library import extract_text_from_upload, retrieve_relevant_snippets
-from storage import (
-    add_book,
-    add_chat_message,
-    add_reading_record,
-    clear_book_chat,
-    export_book_markdown,
-    find_book,
-    get_book_source,
-    get_books,
-    get_chat_messages,
-    get_records,
-    save_book_source,
-)
+try:
+    import reading_coach.coach as coach_module
+    from reading_coach.cloud_storage import SupabaseClient, build_book_markdown
+    from reading_coach.library import extract_text_from_upload, retrieve_relevant_snippets
+    from reading_coach.storage import (
+        add_book as local_add_book,
+        add_chat_message as local_add_chat_message,
+        add_reading_record as local_add_reading_record,
+        clear_book_chat as local_clear_book_chat,
+        export_book_markdown as local_export_book_markdown,
+        find_book as local_find_book,
+        get_book_source as local_get_book_source,
+        get_books as local_get_books,
+        get_chat_messages as local_get_chat_messages,
+        get_records as local_get_records,
+        save_book_source as local_save_book_source,
+    )
+except ModuleNotFoundError:
+    import coach as coach_module
+    from cloud_storage import SupabaseClient, build_book_markdown
+    from library import extract_text_from_upload, retrieve_relevant_snippets
+    from storage import (
+        add_book as local_add_book,
+        add_chat_message as local_add_chat_message,
+        add_reading_record as local_add_reading_record,
+        clear_book_chat as local_clear_book_chat,
+        export_book_markdown as local_export_book_markdown,
+        find_book as local_find_book,
+        get_book_source as local_get_book_source,
+        get_books as local_get_books,
+        get_chat_messages as local_get_chat_messages,
+        get_records as local_get_records,
+        save_book_source as local_save_book_source,
+    )
 
 
 coach_module = importlib.reload(coach_module)
@@ -28,7 +47,9 @@ test_model_connection = coach_module.test_model_connection
 
 
 BASE_DIR = Path(__file__).parent
-PROMPT_PATH = BASE_DIR / "reading_coach.md"
+PROMPT_PATH = BASE_DIR / "prompts" / "reading_coach.md"
+if not PROMPT_PATH.exists():
+    PROMPT_PATH = BASE_DIR / "reading_coach.md"
 CHAT_MODES = [
     "像朋友一样聊",
     "帮我讲明白",
@@ -51,6 +72,145 @@ st.set_page_config(
     page_icon="📚",
     layout="wide",
 )
+
+
+def secret_value(name: str) -> str:
+    try:
+        return str(st.secrets.get(name, "")).strip()
+    except FileNotFoundError:
+        return ""
+
+
+SUPABASE_URL = secret_value("SUPABASE_URL")
+SUPABASE_KEY = secret_value("SUPABASE_PUBLISHABLE_KEY") or secret_value("SUPABASE_ANON_KEY")
+CLOUD_MODE = bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def render_cloud_login() -> None:
+    st.title("陪我读书的 Agent")
+    st.caption("登录后，你的书籍、资料和对话会保存到自己的云端空间。")
+    login_tab, signup_tab = st.tabs(["登录", "注册"])
+
+    with login_tab:
+        with st.form("login_form"):
+            email = st.text_input("邮箱", key="login_email")
+            password = st.text_input("密码", type="password", key="login_password")
+            submitted = st.form_submit_button("登录")
+
+        if submitted:
+            try:
+                result = SupabaseClient(SUPABASE_URL, SUPABASE_KEY).sign_in(email, password)
+                st.session_state["supabase_access_token"] = result["access_token"]
+                st.session_state["supabase_user"] = result["user"]
+                st.rerun()
+            except Exception as exc:
+                st.error(f"登录失败：{exc}")
+
+    with signup_tab:
+        with st.form("signup_form"):
+            email = st.text_input("注册邮箱", key="signup_email")
+            password = st.text_input(
+                "设置密码",
+                type="password",
+                key="signup_password",
+                help="至少 6 位。不要使用你的邮箱密码。",
+            )
+            submitted = st.form_submit_button("创建账号")
+
+        if submitted:
+            try:
+                result = SupabaseClient(SUPABASE_URL, SUPABASE_KEY).sign_up(email, password)
+                if result.get("access_token"):
+                    st.session_state["supabase_access_token"] = result["access_token"]
+                    st.session_state["supabase_user"] = result["user"]
+                    st.rerun()
+                else:
+                    st.success("注册成功。请先前往邮箱完成验证，再回来登录。")
+            except Exception as exc:
+                st.error(f"注册失败：{exc}")
+
+
+if CLOUD_MODE and not st.session_state.get("supabase_access_token"):
+    render_cloud_login()
+    st.stop()
+
+
+cloud_client = None
+current_user = st.session_state.get("supabase_user", {})
+current_user_id = current_user.get("id", "")
+if CLOUD_MODE:
+    cloud_client = SupabaseClient(
+        SUPABASE_URL,
+        SUPABASE_KEY,
+        st.session_state["supabase_access_token"],
+    )
+
+
+def get_books() -> list[dict]:
+    return cloud_client.get_books() if CLOUD_MODE else local_get_books()
+
+
+def add_book(title: str, author: str, purpose: str) -> dict:
+    if CLOUD_MODE:
+        return cloud_client.add_book(current_user_id, title, author, purpose)
+    return local_add_book(title, author, purpose)
+
+
+def find_book(book_id: str) -> dict:
+    return cloud_client.find_book(book_id) if CLOUD_MODE else local_find_book(book_id)
+
+
+def get_records(book_id: str | None = None) -> list[dict]:
+    if CLOUD_MODE:
+        return cloud_client.get_records(book_id)
+    records = local_get_records()
+    if book_id is None:
+        return records
+    return [record for record in records if record["book_id"] == book_id]
+
+
+def add_reading_record(**kwargs) -> dict:
+    if CLOUD_MODE:
+        return cloud_client.add_reading_record(current_user_id, **kwargs)
+    return local_add_reading_record(**kwargs)
+
+
+def get_chat_messages(book_id: str) -> list[dict]:
+    if CLOUD_MODE:
+        return cloud_client.get_chat_messages(book_id)
+    return local_get_chat_messages(book_id)
+
+
+def add_chat_message(book_id: str, role: str, content: str) -> dict:
+    if CLOUD_MODE:
+        return cloud_client.add_chat_message(current_user_id, book_id, role, content)
+    return local_add_chat_message(book_id, role, content)
+
+
+def clear_book_chat(book_id: str) -> None:
+    if CLOUD_MODE:
+        cloud_client.clear_book_chat(book_id)
+    else:
+        local_clear_book_chat(book_id)
+
+
+def get_book_source(book_id: str) -> dict | None:
+    if CLOUD_MODE:
+        return cloud_client.get_book_source(book_id)
+    return local_get_book_source(book_id)
+
+
+def save_book_source(book_id: str, uploaded_file, text: str) -> dict:
+    if CLOUD_MODE:
+        return cloud_client.save_book_source(
+            current_user_id,
+            book_id,
+            uploaded_file.name,
+            text,
+            uploaded_file.getvalue(),
+            uploaded_file.type,
+        )
+    return local_save_book_source(book_id, uploaded_file.name, text)
 
 
 def book_label(book: dict) -> str:
@@ -105,11 +265,24 @@ st.title("陪我读书的 Agent")
 st.caption("一个本地保存记录、陪你理解和复盘的读书教练 MVP")
 
 with st.sidebar:
+    if CLOUD_MODE:
+        st.header("我的账号")
+        st.caption(current_user.get("email", "已登录"))
+        if st.button("退出登录"):
+            try:
+                cloud_client.sign_out()
+            finally:
+                st.session_state.pop("supabase_access_token", None)
+                st.session_state.pop("supabase_user", None)
+                st.rerun()
+
+        st.divider()
+
     st.header("模型接入")
     st.caption("填写 OpenAI-compatible API 后，陪读对话会直接调用真实模型。")
     api_base_url = st.text_input(
         "API Base URL",
-        value=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        value=os.getenv("OPENAI_BASE_URL", ""),
         help="例如：https://api.openai.com/v1，或其他兼容 /chat/completions 的地址。",
     )
     api_key = st.text_input(
@@ -119,7 +292,7 @@ with st.sidebar:
     )
     model = st.text_input(
         "模型名",
-        value=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
+        value=os.getenv("OPENAI_MODEL", ""),
     )
     if api_key.strip():
         st.info("已填写 API Key，建议先测试连接。")
@@ -250,7 +423,7 @@ with tab_source:
                     else:
                         meta = save_book_source(
                             selected_book["id"],
-                            uploaded_file.name,
+                            uploaded_file,
                             source_text,
                         )
                         st.success(
@@ -392,9 +565,21 @@ with tab_export:
     else:
         options = {book_label(book): book["id"] for book in books}
         selected_label = st.selectbox("选择要导出的书", options=list(options.keys()))
+        selected_book = find_book(options[selected_label])
 
-        if st.button("导出 Markdown"):
-            selected_book = find_book(options[selected_label])
-            exported_path = export_book_markdown(selected_book["id"])
+        if CLOUD_MODE:
+            markdown = build_book_markdown(
+                selected_book,
+                get_records(selected_book["id"]),
+                get_chat_messages(selected_book["id"]),
+            )
+            st.download_button(
+                "下载 Markdown",
+                data=markdown,
+                file_name=f"{selected_book['title']}_reading_notes.md",
+                mime="text/markdown",
+            )
+        elif st.button("导出 Markdown"):
+            exported_path = local_export_book_markdown(selected_book["id"])
             st.success("导出完成。")
             st.code(str(exported_path), language="text")

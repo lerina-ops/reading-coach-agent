@@ -8,6 +8,7 @@
 
 - 新建一本书：书名、作者、阅读目的
 - 上传书籍资料：支持 txt、md、pdf，保存为本地资料库
+- 本地向量检索：使用 TF-IDF 向量和余弦相似度查找与问题最相关的书籍片段
 - 记录一次阅读：章节、今日目标、书摘、我的困惑
 - 生成陪读反馈：
   - 通俗解释
@@ -33,6 +34,7 @@
 ├── app.py
 ├── requirements.txt
 ├── README.md
+├── supabase_setup.sql
 ├── prompts/
 │   └── reading_coach.md
 └── reading_coach/
@@ -90,9 +92,9 @@ http://localhost:8501
 
 页面左侧侧边栏支持：
 
-- `API Base URL`：默认 `https://api.openai.com/v1`
+- `API Base URL`：例如 `https://api.openai.com/v1`
 - `API Key`：你的模型服务密钥
-- `模型名`：例如 `gpt-4.1-mini`
+- `模型名`：例如 `gpt-4.1-mini`，需要用户自行填写
 
 接口使用 OpenAI-compatible 的 `/chat/completions` 格式，因此也可以接入兼容该格式的其他模型服务。
 
@@ -110,6 +112,39 @@ streamlit run app.py
 ```
 
 你可以修改 `prompts/reading_coach.md` 来调整 Agent 的人格、输出风格和工作流程。
+
+## Supabase 云端模式
+
+如果 Streamlit Secrets 中配置了 Supabase，应用会自动启用注册和登录。书籍、阅读记录、对话、抽取后的书籍文本和原始上传文件都会保存到 Supabase，并通过 RLS 按用户隔离。
+
+1. 在 Supabase SQL Editor 中运行：
+
+```text
+supabase_setup.sql
+```
+
+2. 如果曾运行过较早版本的初始化 SQL，再额外运行：
+
+```text
+supabase_permissions_patch.sql
+```
+
+3. 在 Streamlit Community Cloud 的 `Manage app` → `Settings` → `Secrets` 中填写：
+
+```toml
+SUPABASE_URL = "https://YOUR_PROJECT_REF.supabase.co"
+SUPABASE_PUBLISHABLE_KEY = "YOUR_PUBLISHABLE_OR_ANON_KEY"
+```
+
+参考 `.streamlit/secrets.example.toml`。不要把真实 Key 写进 GitHub。这里使用的是可公开的 publishable / anon key，数据隔离依赖 Supabase RLS；不要使用 `service_role` key。
+
+如果没有配置 Supabase Secrets，应用会保留本地 JSON 模式，方便本地开发。
+
+## 书籍检索说明
+
+上传资料后，陪读对话会先把书籍切成带少量重叠的片段，再使用本地 TF-IDF 向量和余弦相似度检索相关内容。相关片段会和问题一起发送给模型。
+
+这种方式不需要额外 API Key，也不会增加 embedding API 费用。它比简单的字词计数更稳定，但仍属于轻量向量检索，不等同于使用专门 embedding 模型的语义检索。
 
 ## 数据保存位置
 
