@@ -4,7 +4,9 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import datetime
+from pathlib import Path
 
 import certifi
 
@@ -140,8 +142,12 @@ class SupabaseClient:
         raw_bytes: bytes,
         content_type: str | None = None,
     ) -> dict:
-        safe_filename = filename.replace("/", "_").replace("\\", "_")
-        storage_path = f"{user_id}/{book_id}/{safe_filename}"
+        # Storage object keys stay ASCII-safe. The original display filename is
+        # still saved in book_sources so users continue seeing their real title.
+        suffix = Path(filename).suffix.lower()
+        safe_suffix = suffix if re_safe_suffix(suffix) else ""
+        storage_filename = f"{uuid.uuid4().hex}{safe_suffix}"
+        storage_path = f"{user_id}/{book_id}/{storage_filename}"
         self._request_bytes(
             "POST",
             f"/storage/v1/object/book-files/{quote_storage_path(storage_path)}",
@@ -254,6 +260,13 @@ def quote_storage_path(value: str) -> str:
     return "/".join(
         urllib.parse.quote(segment, safe="")
         for segment in str(value).split("/")
+    )
+
+
+def re_safe_suffix(value: str) -> bool:
+    return bool(value) and all(
+        char.isascii() and (char.isalnum() or char in {".", "-", "_"})
+        for char in value
     )
 
 
