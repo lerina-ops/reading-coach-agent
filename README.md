@@ -7,7 +7,7 @@
 ## 功能
 
 - 新建一本书：书名、作者、阅读目的
-- 上传书籍资料：支持 txt、md、pdf，保存为本地资料库
+- 上传书籍资料：支持 txt、md、pdf、epub，保存为本地资料库
 - 本地向量检索：使用 TF-IDF 向量和余弦相似度查找与问题最相关的书籍片段
 - 记录一次阅读：章节、今日目标、书摘、我的困惑
 - 生成陪读反馈：
@@ -143,6 +143,8 @@ SUPABASE_PUBLISHABLE_KEY = "YOUR_PUBLISHABLE_OR_ANON_KEY"
 ## 书籍检索说明
 
 上传资料后，陪读对话会先把书籍切成带少量重叠的片段，再使用本地 TF-IDF 向量和余弦相似度检索相关内容。相关片段会和问题一起发送给模型。
+
+`mobi` 文件会在服务器已安装 Calibre `ebook-convert` 时自动转换。Streamlit Community Cloud 通常没有该工具，因此建议先在本地用 Calibre 转换为 `epub` 再上传。
 
 这种方式不需要额外 API Key，也不会增加 embedding API 费用。它比简单的字词计数更稳定，但仍属于轻量向量检索，不等同于使用专门 embedding 模型的语义检索。
 

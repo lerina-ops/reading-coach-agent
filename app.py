@@ -410,8 +410,8 @@ with tab_source:
             st.info("这本书还没有上传资料。")
 
         uploaded_file = st.file_uploader(
-            "上传 txt、md 或 pdf",
-            type=["txt", "md", "pdf"],
+            "上传 txt、md、pdf、epub 或 mobi",
+            type=["txt", "md", "pdf", "epub", "mobi"],
             help="上传后会抽取成纯文本，保存在本地 data/book_sources 目录。",
         )
         if uploaded_file and st.button("保存为这本书的资料"):
