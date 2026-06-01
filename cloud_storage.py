@@ -144,7 +144,7 @@ class SupabaseClient:
         storage_path = f"{user_id}/{book_id}/{safe_filename}"
         self._request_bytes(
             "POST",
-            f"/storage/v1/object/book-files/{urllib.parse.quote(storage_path)}",
+            f"/storage/v1/object/book-files/{quote_storage_path(storage_path)}",
             raw_bytes,
             content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream",
             extra_headers={"x-upsert": "true"},
@@ -247,6 +247,14 @@ class SupabaseClient:
 
 def quote(value: str) -> str:
     return urllib.parse.quote(str(value), safe="")
+
+
+def quote_storage_path(value: str) -> str:
+    """Encode object-path segments while preserving Storage folder separators."""
+    return "/".join(
+        urllib.parse.quote(segment, safe="")
+        for segment in str(value).split("/")
+    )
 
 
 def format_timestamp(value: str) -> str:

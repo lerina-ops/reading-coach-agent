@@ -1,22 +1,32 @@
 import math
 import re
+import shutil
+import subprocess
+import tempfile
 from collections import Counter
 from io import BytesIO
+from pathlib import Path
 
+from bs4 import BeautifulSoup
+from ebooklib import epub
 from pypdf import PdfReader
 
 
 def extract_text_from_upload(uploaded_file) -> str:
-    """Extract plain text from a Streamlit uploaded txt, md, or pdf file."""
+    """Extract plain text from a Streamlit uploaded ebook or text file."""
     name = uploaded_file.name.lower()
     data = uploaded_file.getvalue()
 
     if name.endswith(".pdf"):
         return extract_pdf_text(data)
+    if name.endswith(".epub"):
+        return extract_epub_text(data)
+    if name.endswith(".mobi"):
+        return extract_mobi_text(data)
     if name.endswith(".txt") or name.endswith(".md"):
         return decode_text(data)
 
-    raise ValueError("暂时只支持 txt、md、pdf 文件。")
+    raise ValueError("暂时只支持 txt、md、pdf、epub、mobi 文件。")
 
 
 def extract_pdf_text(data: bytes) -> str:
@@ -27,6 +37,45 @@ def extract_pdf_text(data: bytes) -> str:
         if text.strip():
             pages.append(f"[第 {index} 页]\n{text.strip()}")
     return "\n\n".join(pages).strip()
+
+
+def extract_epub_text(data: bytes) -> str:
+    with tempfile.NamedTemporaryFile(suffix=".epub") as temp_file:
+        temp_file.write(data)
+        temp_file.flush()
+        book = epub.read_epub(temp_file.name)
+
+    sections = []
+    for item in book.get_items_of_type(9):
+        soup = BeautifulSoup(item.get_content(), "html.parser")
+        text = soup.get_text("\n", strip=True)
+        if text:
+            sections.append(text)
+    return "\n\n".join(sections).strip()
+
+
+def extract_mobi_text(data: bytes) -> str:
+    converter = shutil.which("ebook-convert")
+    if not converter:
+        raise ValueError(
+            "当前服务器还不能直接解析 mobi。请先用 Calibre 转换为 epub，"
+            "再上传转换后的 epub 文件。"
+        )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        input_path = Path(temp_dir) / "book.mobi"
+        output_path = Path(temp_dir) / "book.epub"
+        input_path.write_bytes(data)
+        result = subprocess.run(
+            [converter, str(input_path), str(output_path)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        if result.returncode != 0 or not output_path.exists():
+            raise ValueError("mobi 转换失败，请先在本地转换为 epub 后再上传。")
+        return extract_epub_text(output_path.read_bytes())
 
 
 def decode_text(data: bytes) -> str:
