@@ -316,16 +316,18 @@ def build_book_markdown(book: dict, records: list[dict], messages: list[dict]) -
             )
 
     if messages:
-        lines.extend(["## 陪读对话", ""])
-        for message in messages:
-            role_name = "我" if message["role"] == "user" else "读书教练"
-            lines.extend(
-                [
-                    f"### {role_name}｜{format_timestamp(message.get('created_at', ''))}",
-                    "",
-                    message.get("content") or "",
-                    "",
-                ]
-            )
+        lines.extend(
+            [
+                "## 陪读会话",
+                "",
+                (
+                    f"> 这本书有 {len(messages)} 条底层对话消息。"
+                    "为了保持笔记整洁，导出时不再逐条列出；"
+                    "请在长椅点击“结束阅读并保存到回忆步道”，"
+                    "把一次阅读中的对话合并为上方的阅读记录。"
+                ),
+                "",
+            ]
+        )
 
     return "\n".join(lines)

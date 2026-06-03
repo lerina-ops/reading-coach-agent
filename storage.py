@@ -172,17 +172,19 @@ def export_book_markdown(book_id: str) -> Path:
             )
 
     if chat_messages:
-        lines.extend(["## 陪读对话", ""])
-        for message in chat_messages:
-            role_name = "我" if message["role"] == "user" else "读书教练"
-            lines.extend(
-                [
-                    f"### {role_name}｜{message['created_at']}",
-                    "",
-                    message.get("content") or "",
-                    "",
-                ]
-            )
+        lines.extend(
+            [
+                "## 陪读会话",
+                "",
+                (
+                    f"> 这本书有 {len(chat_messages)} 条底层对话消息。"
+                    "为了保持笔记整洁，导出时不再逐条列出；"
+                    "请在长椅点击“结束阅读并保存到回忆步道”，"
+                    "把一次阅读中的对话合并为上方的阅读记录。"
+                ),
+                "",
+            ]
+        )
 
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     filename = f"{safe_filename(book['title'])}_reading_notes.md"

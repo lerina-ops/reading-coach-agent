@@ -642,6 +642,116 @@ def latest_dialogue_pair(messages: list[dict]) -> tuple[str, str] | None:
     return None
 
 
+def reading_session_key(book_id: str) -> str:
+    return f"reading_session_{book_id}"
+
+
+def start_reading_session(book_id: str, message_count: int) -> None:
+    st.session_state[reading_session_key(book_id)] = {
+        "started_at": datetime.now().isoformat(),
+        "message_count": message_count,
+    }
+
+
+def get_reading_session(book_id: str) -> dict | None:
+    return st.session_state.get(reading_session_key(book_id))
+
+
+def clear_reading_session(book_id: str) -> None:
+    st.session_state.pop(reading_session_key(book_id), None)
+
+
+def format_duration(seconds: int) -> str:
+    minutes, remaining_seconds = divmod(max(seconds, 0), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours} 小时 {minutes} 分钟"
+    if minutes:
+        return f"{minutes} 分钟 {remaining_seconds} 秒"
+    return f"{remaining_seconds} 秒"
+
+
+def session_elapsed(session: dict) -> tuple[str, int]:
+    started_at = datetime.fromisoformat(session["started_at"])
+    seconds = int((datetime.now() - started_at).total_seconds())
+    return format_duration(seconds), seconds
+
+
+def format_dialogue_excerpt(messages: list[dict], max_items: int = 12) -> str:
+    if not messages:
+        return "本次阅读没有产生对话。"
+
+    lines = []
+    for message in messages[-max_items:]:
+        role_name = "我" if message.get("role") == "user" else "读书教练"
+        content = message.get("content", "").strip()
+        if content:
+            lines.append(f"**{role_name}**：{content}")
+    return "\n\n".join(lines) or "本次阅读没有产生可整理的对话。"
+
+
+def build_session_feedback(
+    selected_book: dict,
+    duration_text: str,
+    session_messages: list[dict],
+) -> str:
+    user_messages = [message.get("content", "") for message in session_messages if message.get("role") == "user"]
+    assistant_messages = [
+        message.get("content", "")
+        for message in session_messages
+        if message.get("role") == "assistant"
+    ]
+    dialogue_excerpt = format_dialogue_excerpt(session_messages)
+    focus_text = summarize_text(" ".join(user_messages), 220) if user_messages else "这次主要是安静阅读或整理资料。"
+    note_text = summarize_text(" ".join(assistant_messages), 260) if assistant_messages else "还没有生成陪读回复。"
+
+    return f"""
+## 今日阅读笔记
+- 书名：《{selected_book.get("title", "")}》
+- 阅读时长：{duration_text}
+- 本次重点：{focus_text}
+- 陪读摘录：{note_text}
+
+## 本次对话摘录
+{dialogue_excerpt}
+
+## 下次继续读
+下次可以从这次最卡住的问题继续，也可以把其中一个观点整理成自己的生活例子。
+""".strip()
+
+
+def save_reading_session_as_record(
+    selected_book: dict,
+    all_messages: list[dict],
+) -> dict | None:
+    session = get_reading_session(selected_book["id"])
+    if not session:
+        return None
+
+    start_count = int(session.get("message_count", 0))
+    session_messages = all_messages[start_count:]
+    duration_text, _ = session_elapsed(session)
+    started_at = datetime.fromisoformat(session["started_at"])
+    ended_at = datetime.now()
+    dialogue_excerpt = format_dialogue_excerpt(session_messages)
+    feedback = build_session_feedback(selected_book, duration_text, session_messages)
+
+    record = add_reading_record(
+        book_id=selected_book["id"],
+        chapter=f"陪读会话｜{ended_at.strftime('%Y-%m-%d %H:%M')}",
+        today_goal=(
+            f"阅读时长：{duration_text}｜"
+            f"开始：{started_at.strftime('%Y-%m-%d %H:%M')}｜"
+            f"结束：{ended_at.strftime('%Y-%m-%d %H:%M')}"
+        ),
+        excerpt=dialogue_excerpt,
+        confusion="本次阅读由陪读对话自动整理。",
+        feedback=feedback,
+    )
+    clear_reading_session(selected_book["id"])
+    return record
+
+
 def save_latest_dialogue_as_record(book_id: str, messages: list[dict]) -> bool:
     pair = latest_dialogue_pair(messages)
     if not pair:
@@ -909,6 +1019,7 @@ def render_chat_scene(
     source_text = source["text"] if source else ""
     messages = get_chat_messages(selected_book["id"])
     selected_records = get_records(selected_book["id"])
+    active_session = get_reading_session(selected_book["id"])
 
     left, right = st.columns([2, 1])
     with left:
@@ -938,17 +1049,31 @@ def render_chat_scene(
         if selected_records:
             latest = selected_records[-1]
             st.caption(f"最近读到：{latest.get('chapter') or '未填写章节'}")
-        if messages:
-            if st.button("把最近对话沉淀成阅读记录", type="primary"):
-                if save_latest_dialogue_as_record(selected_book["id"], messages):
-                    st.success("已保存为一条新的阅读记录。")
-                    st.rerun()
+
+        st.markdown("**本次阅读**")
+        if active_session:
+            duration_text, _ = session_elapsed(active_session)
+            session_message_count = max(len(messages) - int(active_session.get("message_count", 0)), 0)
+            st.metric("已阅读", duration_text)
+            st.caption(f"本次已产生 {session_message_count} 条对话消息。")
+            if st.button("结束阅读并保存到回忆步道", type="primary"):
+                record = save_reading_session_as_record(selected_book, messages)
+                if record:
+                    st.success("已保存为一条完整的阅读记录。")
+                    go_to_scene("trail")
                 else:
-                    st.warning("还没有完整的一问一答可以沉淀。")
+                    st.warning("还没有正在进行的阅读。")
+        else:
+            st.caption("点击开始后，我会记录这次阅读的时长，并在结束时把整轮对话合并成一条阅读记录。")
+            if st.button("开始阅读计时", type="primary"):
+                start_reading_session(selected_book["id"], len(messages))
+                st.rerun()
+
         with st.expander("对话管理", expanded=False):
             st.caption("对话默认会保存。只有你主动点击下面按钮时才会清空。")
             if st.button("清空这本书的对话", type="secondary"):
                 clear_book_chat(selected_book["id"])
+                clear_reading_session(selected_book["id"])
                 st.rerun()
 
     with st.expander("看看最近阅读记录给对话的上下文", expanded=False):
@@ -1056,18 +1181,8 @@ def render_trail_scene(selected_book: dict) -> None:
             st.markdown("**陪读反馈**")
             render_feedback(item.get("feedback", ""))
 
-    st.markdown("### 陪读对话")
-    if not messages:
-        st.caption("还没有保存的陪读对话。")
-    else:
-        for message in sorted(
-            messages,
-            key=lambda row: row.get("created_at", ""),
-            reverse=True,
-        )[:40]:
-            role_name = "我" if message["role"] == "user" else "读书教练"
-            with st.expander(f"{role_name}｜{message.get('created_at', '')}"):
-                st.markdown(message.get("content") or "")
+    st.markdown("### 陪读会话")
+    st.caption("陪读对话不再按单条消息展示。点击“结束阅读并保存到回忆步道”后，会作为一整次阅读记录出现在上方。")
 
 
 def render_park_app(
